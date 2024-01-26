@@ -1,0 +1,58 @@
+---
+title: "venn_diagram_journals2"
+author: "Patricia"
+date: '2022-11-08'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+rm(list = ls())
+```
+
+```{r setup, include=FALSE}
+library(eulerr)
+library(nVennR)
+library(data.table)
+library(stringr)
+```
+
+```{r}
+setwd(".../data")
+df_journal <- fread("journal_masterlist_jun2023.csv")
+```
+
+```{r}
+df_journal <- df_journal[,c(1, 4:7)]
+colnames(df_journal) <- c("Title", "AJOL", "SJR", "JCR", "Ulrich")
+df_journal$AJOL <- as.numeric(df_journal$AJOL)
+df_journal$SJR <- as.numeric(df_journal$SJR)
+df_journal$JCR <- as.numeric(df_journal$JCR)
+df_journal$Ulrich <- as.numeric(df_journal$Ulrich)
+
+eu <- euler(df_journal[, c(2:5)], shape = "circle")
+eu
+```
+
+
+```{r eval=FALSE}
+myV <- createVennObj(nSets = 4, sNames = c("AJOL","SJR","JCR","Ulrich"))
+myV <- setVennRegion(myV, c("AJOL"), 237)
+myV <- setVennRegion(myV, c("SJR"), 74)
+myV <- setVennRegion(myV, c("JCR"), 74)
+myV <- setVennRegion(myV, c("Ulrich"), 751)
+myV <- setVennRegion(myV, c("AJOL", "SJR"), 9)
+myV <- setVennRegion(myV, c("AJOL", "JCR"), 13)
+myV <- setVennRegion(myV, c("AJOL", "Ulrich"), 102)
+myV <- setVennRegion(myV, c("SJR", "JCR"), 14)
+myV <- setVennRegion(myV, c("SJR", "Ulrich"), 29)
+myV <- setVennRegion(myV, c("JCR", "Ulrich"), 54)
+myV <- setVennRegion(myV, c("AJOL", "SJR", "JCR"), 3)
+myV <- setVennRegion(myV, c("AJOL", "SJR", "Ulrich"), 12)
+myV <- setVennRegion(myV, c("AJOL", "JCR", "Ulrich"), 25)
+myV <- setVennRegion(myV, c("SJR", "JCR", "Ulrich"), 32)
+myV <- setVennRegion(myV, c("AJOL", "SJR", "JCR", "Ulrich"), 23)
+
+myV <- plotVenn(nVennObj = myV, nCycles = 15000, borderWidth = 3, systemShow = TRUE)
+```
