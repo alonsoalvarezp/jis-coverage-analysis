@@ -1,0 +1,202 @@
+---
+title: "journal_analysis"
+author: "Patricia Alonso-Álvarez"
+output: html_document
+date: "2022-11-07"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+rm(list = ls())
+```
+
+```{r setup, include=FALSE}
+library(data.table)
+library(stringr)
+library(dplyr)
+library(sjmisc)
+library(maps)
+library(ggplot2)
+library(gridExtra)
+library(geosphere)
+library(purrr)
+library(ggrepel)
+```
+
+```{r}
+setwd("~/Dropbox/Academic/PhD/Papers")
+#Loading JCR data
+df_jcr<- fread("jcr_africa_issn.csv")
+df_jcr_relational <- fread("jcr_africa.csv")
+df_jcr_relational <- df_jcr_relational[,c(3, 4, 10)]
+df_jcr_region <- fread("region_id.csv")
+df_jcr <- left_join(df_jcr, df_jcr_relational, by = "issn", na_matches = "never")
+df_jcr <- df_jcr[which(duplicated(df_jcr$fue) == FALSE),]
+df_jcr <- left_join(df_jcr, df_jcr_relational, by = c("eissn.x" = "eissn"), na_matches = "never")
+df_jcr <- df_jcr[which(duplicated(df_jcr$fue) == FALSE),]
+df_jcr$region_id.x <- ifelse(is.na(df_jcr$issn.x) == TRUE, df_jcr$region_id.y, df_jcr$region_id.x)
+df_jcr <- df_jcr[,c(1:3, 5)]
+df_jcr <- left_join(df_jcr, df_jcr_region, by = c("region_id.x" = "ID_REGION"))
+df_jcr <- df_jcr[,c(1:3, 5)]
+colnames(df_jcr) <- c("title", "issn", "eissn", "country")
+
+#Loading SJR data
+df_sjr <- fread("sjr_africa_issn.csv")
+df_sjr_countries <- fread("sjr_africa.csv")
+df_sjr_countries <- df_sjr_countries[,c(3, 5, 16)]
+df_sjr_countries$Title <- tolower(str_squish(str_trim(str_remove_all(df_sjr_countries$Title, "[[:punct:]]"))))
+df_sjr <- left_join(df_sjr, df_sjr_countries, by = c("Title" = "Title"), na_matches = "never")
+df_sjr <- df_sjr[which(duplicated(df_sjr$Title) == FALSE),]
+df_sjr <- df_sjr[,c(1, 3, 2, 5)]
+colnames(df_sjr) <- c("title", "issn", "eissn", "country")
+
+#Loading AJOL data
+df_ajol <- fread("ajol.csv")
+df_ajol <- df_ajol[,c(1:5)]
+colnames(df_ajol)[4] <- "title"
+
+#Loading ulrich
+df_ulrich <- fread("ulrich_africa.csv")
+
+#Loading masterlist
+df_databases <- fread("journal_masterlist_jun2023.csv")
+df_databases$is_open_alex <- ifelse(df_databases$is_open_alex == "NULL", 0, 1)
+df_databases$is_open_alex <- as.integer(df_databases$is_open_alex)
+```
+
+Title adjustment to improve joints
+```{r}
+df_ajol$title <- str_squish(str_trim(tolower(str_remove_all(df_ajol$title, "[[:punct:]]"))))
+
+df_jcr$title <- str_squish(str_trim(tolower(str_remove_all(df_jcr$title, "[[:punct:]]"))))
+
+df_sjr$title <- str_squish(str_trim(tolower(str_remove_all(df_sjr$title, "[[:punct:]]"))))
+
+df_ulrich$title <- str_squish(str_trim(tolower(str_remove_all(df_ulrich$title, "[[:punct:]]"))))
+
+df_databases$title <- str_squish(str_trim(tolower(str_remove_all(df_databases$title, "[[:punct:]]"))))
+```
+
+Database joints
+```{r}
+df_databases$issn[df_databases$issn == "NULL"] <-  NA
+df_databases_country <- left_join(df_databases, df_ulrich, by = "issn", na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_ajol, by = c("issn" = "issn_from_ajol"), na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_jcr, by = "issn", na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_sjr, by = "issn", na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_ulrich, by = c("title.x" = "title"), na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_ajol, by = c("title.x" = "title"), na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_jcr, by = c("title.x" = "title"), na_matches = "never")
+df_databases_country <- left_join(df_databases_country, df_sjr, by = c("title.x" = "title"), na_matches = "never")
+
+df_databases_country$country <- paste(df_databases_country$country.x, df_databases_country$country.y, df_databases_country$country.x.x, df_databases_country$country.y.y, df_databases_country$country.x.x.x, df_databases_country$country.y.y.y, df_databases_country$country.x.x.x.x, df_databases_country$country.y.y.y.y)
+
+df_databases_country$country <- str_replace_all(df_databases_country$country, "Côte d'Ivoire", "cote divoire")
+df_databases_country$country <- str_remove_all(df_databases_country$country, "NA")
+df_databases_country$country <- tolower(str_squish(str_trim(str_remove_all(df_databases_country$country, "[[:punct:]]"))))
+df_databases_country <- df_databases_country[,c(1:10, 37)]
+df_databases_country$country <- ifelse(df_databases_country$country == "congo" | df_databases_country$country == "congo congo", "congo republic", df_databases_country$country)
+df_databases_country <- unique(df_databases_country)
+```
+
+Cleaning countries
+```{r}
+countries <- tolower(c("Nigeria" , "Ethiopia" , "Egypt" , "congo democratic republic of" , "Tanzania" , "South Africa" , "Kenya" , "Uganda" , "Algeria" , "south sudan", "Sudan" , "Morocco" , "Angola" , "Mozambique" , "Ghana" , "Madagascar" , "Cameroon" , "Cote dIvoire" , "Niger" , "Burkina Faso" , "Mali" , "Malawi" , "Zambia" , "Senegal" , "Chad" , "Somalia" , "Zimbabwe" , "Guinea" , "Rwanda" , "Benin" , "Burundi" , "Tunisia" , "Togo" , "Sierra Leone" , "Libya" , "Liberia" , "Central African Republic" , "Mauritania" , "Eritrea" , "Namibia" , "Gambia" , "Botswana" , "Gabon" , "Lesotho" , "Guinea-Bissau" , "Mauritius" , "Djibouti" , "Cabo Verde" , "São Tomé & Principe" , "Seychelles", "comoros", "swaziland", "eswatini", "congo republic"))
+
+countries_pattern <- paste(countries, collapse = "|")
+
+list_countries <- list()
+for (i in 1:nrow(df_databases_country)) {
+  vec <- as.vector(str_extract_all(df_databases_country$country[i], countries_pattern, simplify = TRUE))
+  duplicates <- duplicated(vec)
+  vec <- vec[which(duplicates == FALSE)]
+  list_countries[[i]] <- vec
+}
+
+vec <- which(lengths(list_countries) > 1) #Journals classified in different countries depending on the database
+df <- df_databases_country[vec,]
+list_countries <- list_countries[-vec]
+df_databases_country <- df_databases_country[-vec,]
+vec <- which(lengths(list_countries) == 0)
+list_countries <- list_countries[-vec]
+df_databases_country <- df_databases_country[-vec,]
+
+vec <- unlist(list_countries)
+
+df_databases_country$country <- vec
+
+df$country <- c("south africa", "nigeria", "south africa", "nigeria", "kenya", NA, "south africa", "uganda", "ghana", NA, "uganda", "south sudan", "kenya", NA) #Manually checked with ISSN Portal
+df_databases_country <- rbind(df_databases_country, df)
+#write.csv(df_databases_country, "journal_databases_country.csv", row.names = FALSE)
+```
+
+Calculating frequencies
+```{r}
+countries <- tolower(c("Nigeria" , "Ethiopia" , "Egypt" , "Republic of Congo" , "Democratic Republic of the Congo", "Tanzania" , "South Africa" , "Kenya" , "Uganda" , "Algeria" , "Sudan" , "Morocco" , "Angola" , "Mozambique" , "Ghana" , "Madagascar" , "Cameroon" , "Cote dIvoire" , "Niger" , "Burkina Faso" , "Mali" , "Malawi" , "Zambia" , "Senegal" , "Chad" , "Somalia" , "Zimbabwe" , "Guinea" , "Rwanda" , "Benin" , "Burundi" , "Tunisia" , "Togo" , "Sierra Leone" , "Libya" , "Liberia" , "Central African Republic" , "Mauritania" , "Eritrea" , "Namibia" , "Gambia" , "Botswana" , "Gabon" , "Lesotho" , "Guinea-Bissau" , "Mauritius" , "Djibouti" , "Cabo Verde" , "São Tomé & Principe" , "Seychelles", "comoros", "swaziland", "equatorial guinea", "Central African Republic", "south sudan", "ivory coast", "gambia"))
+
+total_ajol <- length(unique(df_databases_country$title.x[which(df_databases_country$is_ajol == 1)]))
+total_scopus <- length(unique(df_databases_country$title.x[which(df_databases_country$is_scopus == 1)]))
+total_wos <- length(unique(df_databases_country$title.x[which(df_databases_country$is_wos == 1)]))
+total_ulrich <- length(unique(df_databases_country$title.x[which(df_databases_country$is_ulrich == 1)]))
+total_length <- length(unique(df_databases_country$title.x))
+
+df_databases_country <- group_by(df_databases_country, country)
+df_databases_country$total <- 1
+table_countries <- summarise(df_databases_country, freq_ulrich = sum(is_ulrich)/total_ulrich, freq_ajol = sum(is_ajol)/total_ajol, freq_scopus = sum(is_scopus)/total_scopus, freq_wos = sum(is_wos)/total_wos, freq_total = sum(total)/total_length, num_total = sum(total))
+```
+
+Calculating map
+```{r}
+world <- map_data("world")
+africa <- map_data("world", region = countries)
+africa$region <- tolower(africa$region)
+africa$region <- ifelse(africa$region == "ivory coast", "cote divoire", africa$region)
+africa$region <- ifelse(africa$region == "republic of congo", "congo", africa$region)
+africa <- left_join(africa, table_countries, by = c("region" = "country"))
+centroids <- africa %>% 
+  group_by(region) %>% 
+  group_modify(~ data.frame(centroid(cbind(.x$long, .x$lat))))
+centroids <- left_join(centroids, table_countries, by = c("region" = "country"))
+centroids[centroids$region == "south africa", 2] <- 23.28
+centroids[centroids$region == "south africa", 3] <- -30.20
+```
+
+```{r}
+total <- ggplot() + 
+  geom_polygon(data = africa, aes(x=long, y=lat, group=group, fill = num_total), color="white", size = 0.2)  +
+  geom_label_repel(data = centroids, aes(x=lon, y=lat, label = num_total), label.padding = 0.1, size = 5,
+                   max.overlaps = 20) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 100), oob = scales::squish,
+                      na.value = "white") +
+  theme(plot.margin = unit(c(1, 0, 1, 0), "cm")) +
+  labs(fill = "Total journals\nper country", title = "Full dataset")
+
+ulrich <- ggplot() + geom_polygon(data = africa, 
+          aes(x=long, y=lat, group=group, fill = freq_ulrich/freq_total), 
+          color="white", size = 0.2)  +
+          scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 4), oob = scales::squish, na.value = "white") +
+  theme(plot.margin = unit(c(1, 5, 1, 5), "cm"))
+
+ajol <- ggplot() + 
+  geom_polygon(data = africa, aes(x=long, y=lat, group=group, fill = freq_ajol/freq_total), color="white", size = 0.2)  +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 4), oob = scales::squish, na.value = "white") +
+  theme(plot.margin = unit(c(0, 2.5, 0, 2.5), "cm")) +
+  labs(fill = "Relative coverage\nby country", title = "AJOL")
+
+scopus <- ggplot() + 
+  geom_polygon(data = africa, aes(x=long, y=lat, group=group, fill = freq_scopus/freq_total), color="white", size = 0.2) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 4), oob = scales::squish, na.value = "white") +
+  theme(plot.margin = unit(c(0, 2.5, 0, 2.5), "cm")) +
+  labs(fill = "Relative coverage\nby country", title = "SJR")
+
+wos <- ggplot() + 
+  geom_polygon(data = africa, aes(x=long, y=lat, group=group, fill = freq_wos/freq_total), color="white", size = 0.2) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 4), oob = scales::squish, na.value = "white") +
+  theme(plot.margin = unit(c(0, 2.5, 0, 2.5), "cm")) +
+  labs(fill = "Relative coverage\nby country", title = "JCR")
+
+p <- grid.arrange(total, arrangeGrob(ajol, scopus, wos), ncol=2)
+#ggsave("country_plot.png", plot = p, dpi = 700)
+```

@@ -1,0 +1,275 @@
+---
+title: "journal_analysis_area"
+author: "Patricia Alonso-Álvarez"
+output: html_document
+date: "2022-11-07"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+rm(list = ls())
+```
+
+```{r setup, include=FALSE}
+library(data.table)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(sjmisc)
+library(ggplot2)
+library(gridExtra)
+library(extrafont)
+```
+
+Data loading
+```{r}
+#Loading JCR data
+df_jcr <- fread("jcr_africa_area.csv")
+df_jcr_area <- fread("jcr_areas.csv")
+df_jcr_area <- df_jcr_area[,c(1:2)]
+df_jcr <- left_join(df_jcr, df_jcr_area, by = c("categoria_id" = "id"))
+df_jcr <- df_jcr[,c(1:3, 5)]
+colnames(df_jcr) <- c("title", "issn", "eissn", "area")
+
+#Loading SJR data
+df_sjr <- fread("sjr_africa_issn.csv")
+df_sjr_area <- fread("sjr_africa.csv")
+df_sjr_area <- df_sjr_area[,c(3, 5, 20)]
+df_sjr_area$Title <- tolower(str_squish(str_trim(str_remove_all(df_sjr_area$Title, "[[:punct:]]"))))
+df_sjr <- left_join(df_sjr, df_sjr_area, by = c("Title" = "Title"), na_matches = "never")
+df_sjr <- df_sjr[which(duplicated(df_sjr$Title) == FALSE),]
+df_sjr <- df_sjr[,c(1, 3, 2, 5)]
+colnames(df_sjr) <- c("title", "issn", "eissn", "area")
+
+#Loading AJOL
+df_ajol <- fread("ajol_area.csv")
+df_ajol <- df_ajol[,c(1:4)]
+colnames(df_ajol)[1] <- "title"
+colnames(df_ajol)[2] <- "area"
+
+#Loading Ulrich data
+df_ulrich <- fread("ulrich_africa.csv")
+df_ulrich <- df_ulrich[,c(1:2, 4:5)]
+colnames(df_ulrich) <- c("title", "area", "issn", "issn2")
+
+#Loading masterlist 
+df_databases <- fread("journal_masterlist_jun2023.csv")
+df_databases$is_open_alex <- ifelse(df_databases$is_open_alex == "NULL", 0, 1)
+df_databases$is_open_alex <- as.integer(df_databases$is_open_alex)
+```
+
+Area list to manually define the FOS areas equivalence
+```{r eval=FALSE}
+areas_ulrich <- df_ulrich$area
+areas_ulrich <- str_split_fixed(areas_ulrich, "-|:", 2)[, 1]
+areas_ajol <- df_ajol_area$area
+areas_sjr <- df_sjr$area
+areas_sjr <- unlist(str_split(areas_sjr, ";"))
+areas_sjr <- str_remove_all(areas_sjr, "(Q1)|(Q2)|(Q3)|(Q4)")
+areas_sjr <- str_remove_all(areas_sjr, fixed(" ()"))
+areas_jcr <- df_jcr$area
+areas <- c(areas_ulrich, areas_ajol, areas_sjr, areas_jcr)
+areas <- tolower(str_squish(str_trim(str_remove_all(areas, "[[:punct:]]"))))
+areas <- unique(areas)
+#write.csv(areas, "areas_fos_classification.csv", row.names = FALSE)
+```
+
+Title adjustment to improve joints
+```{r}
+df_ajol$title <- str_squish(str_trim(tolower(str_remove_all(df_ajol$title, "[[:punct:]]"))))
+
+df_jcr$title <- str_squish(str_trim(tolower(str_remove_all(df_jcr$title, "[[:punct:]]"))))
+
+df_sjr$title <- str_squish(str_trim(tolower(str_remove_all(df_sjr$title, "[[:punct:]]"))))
+
+df_ulrich$title <- str_squish(str_trim(tolower(str_remove_all(df_ulrich$title, "[[:punct:]]"))))
+
+df_databases$title <- str_squish(str_trim(tolower(str_remove_all(df_databases$title, "[[:punct:]]"))))
+```
+
+Joints to substitute database areas by FOS areas
+```{r}
+df_fos_areas <- fread("areas_fos_classification.csv") #Equivalence of AJOL, WoS and Scopus areas with areas FOS. Manually defined.
+df_fos_areas$areas <- tolower(str_squish(str_trim(str_remove_all(df_fos_areas$areas, "[[:punct:]]"))))
+df_fos_areas <- df_fos_areas[which(duplicated(df_fos_areas$areas) == FALSE),]
+
+df_ulrich$area <- str_split_fixed(df_ulrich$area, "-|:", 2)[, 1]
+df_ulrich$area <- tolower(str_squish(str_trim(str_remove_all(df_ulrich$area, "[[:punct:]]"))))
+df_ulrich <- left_join(df_ulrich, df_fos_areas, by = c("area" = "areas"))
+df_ulrich <- df_ulrich[,c(1, 3:5)]
+
+df_ajol$area <- tolower(str_squish(str_trim(str_remove_all(df_ajol$area, "[[:punct:]]"))))
+df_ajol <- left_join(df_ajol, df_fos_areas, by = c("area" = "areas"))
+df_ajol <- df_ajol[,c(1, 3:5)]
+
+df_sjr <- separate(df_sjr, area, c("ra1", "ra2", "ra3", "ra4", "ra5", "ra6", "ra7"), sep = ";")
+df_sjr <- pivot_longer(df_sjr, ra1:ra7, values_to = "area", values_drop_na = TRUE)
+df_sjr <- df_sjr[,-4]
+df_sjr$area  <- str_remove_all(df_sjr$area , "(Q1)|(Q2)|(Q3)|(Q4)")
+df_sjr$area <- tolower(str_squish(str_trim(str_remove_all(df_sjr$area, "[[:punct:]]"))))
+df_sjr <- left_join(df_sjr, df_fos_areas, by = c("area" = "areas"))
+df_sjr2 <- df_sjr[-which(df_sjr$eissn == "--"),]
+df_sjr2 <- df_sjr2[which(df_sjr2$fos == "natural sciences"),]
+df_sjr <- df_sjr[,c(1:3, 5)]
+
+df_jcr$area <- tolower(str_squish(str_trim(str_remove_all(df_jcr$area, "[[:punct:]]"))))
+df_jcr <- left_join(df_jcr, df_fos_areas, by = c("area" = "areas"))
+df_jcr <- df_jcr[,c(1:3, 5)]
+```
+
+Databases joint
+```{r}
+df_databases_area <- left_join(df_databases, df_ulrich, by = "issn", na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_ajol, by = c("issn" = "issn_from_ajol"), na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_jcr, by = "issn", na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_sjr, by = "issn", na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_ulrich, by = c("title.x" = "title"), na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_ajol, by = c("title.x" = "title"), na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_jcr, by = c("title.x" = "title"), na_matches = "never")
+df_databases_area <- left_join(df_databases_area, df_sjr, by = c("title.x" = "title"), na_matches = "never")
+
+df_databases_area$area <- paste(df_databases_area$fos.x, df_databases_area$fos.x.x, df_databases_area$fos.x.x.x, df_databases_area$fos.x.x.x.x, df_databases_area$fos.y, df_databases_area$fos.y.y, df_databases_area$fos.y.y.y, df_databases_area$fos.y.y.y.y)
+
+df_databases_area <- df_databases_area[,c(1:7, 33)]
+df_databases_area$area <- str_remove_all(df_databases_area$area, "NA")
+df_databases_area <- unique(df_databases_area)
+```
+
+Cleaning duplicates and journals that belong to more than one area
+```{r}
+areas <- unique(df_fos_areas$fos)[2:7]
+
+areas_pattern <- paste(areas, collapse = "|")
+
+list_areas <- list()
+for (i in 1:nrow(df_databases_area)) {
+  vec <- as.vector(str_extract_all(df_databases_area$area[i], areas_pattern, simplify = TRUE))
+  duplicates <- duplicated(vec)
+  vec <- vec[which(duplicates == FALSE)]
+  list_areas[[i]] <- vec
+}
+
+vec <- which(lengths(list_areas) > 1)
+df <- df_databases_area[vec,]
+list_two_areas <- list_areas[vec]
+list_areas <- list_areas[-vec]
+df_databases_area <- df_databases_area[-vec,]
+vec <- which(lengths(list_areas) == 0)
+list_areas <- list_areas[-vec]
+df_databases_area <- df_databases_area[-vec,]
+
+vec <- unlist(list_areas)
+
+df_databases_area$area <- vec
+df_databases_area <- unique(df_databases_area)
+
+df_two_areas <- plyr::ldply(list_two_areas, rbind)
+df <- cbind(df, df_two_areas)
+df <- df[,c(1:7, 9:11)]
+colnames(df)[8:10] <- c("area1", "area2", "area3")
+df <- pivot_longer(df, area1:area3, names_to = "area")
+df <- df[-which(is.na(df$value) == TRUE), c(1:7, 9)]
+df <- unique(df)
+colnames(df)[8] <- "area" 
+df_databases_area <- rbind(df_databases_area, df)
+```
+
+Calculating frequencies
+```{r}
+df_databases_area <- group_by(df_databases_area, area)
+df_databases_area$total <- 1
+total_ajol <- length(df_databases_area$title.x[which(df_databases_area$is_ajol == 1)])
+total_scopus <- length(df_databases_area$title.x[which(df_databases_area$is_scopus == 1)])
+total_wos <- length(df_databases_area$title.x[which(df_databases_area$is_wos == 1)])
+total_ulrich <- length(df_databases_area$title.x[which(df_databases_area$is_ulrich == 1)])
+total_length <- length(df_databases_area$title.x)
+
+table_area <- summarise(df_databases_area, freq_ulrich = sum(is_ulrich)/total_ulrich, freq_ajol = sum(is_ajol)/total_ajol, freq_scopus = sum(is_scopus)/total_scopus, freq_wos = sum(is_wos)/total_wos, freq_total = sum(total)/total_length, num_total = sum(total))
+
+table_area$area <- c("Agricultural\nsciences", "Engineering\nand technology", "Humanities", "Medical and\nhealth sciences", "Natural\nsciences", "Social\nsciences")
+table_area$area <- factor(table_area$area, levels = c("Natural\nsciences", "Engineering\nand technology", "Medical and\nhealth sciences", "Agricultural\nsciences", "Social\nsciences", "Humanities"))
+social_sciences <- "Social\nsciences"
+```
+
+```{r}
+total <- ggplot(table_area, aes(y = num_total, x = area, fill = num_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  geom_label(data = table_area %>% filter(!area %in% social_sciences),
+    aes(label = num_total), fill = "white", size = 5) +
+  geom_label(data = table_area %>% filter(area %in% social_sciences),
+    aes(label = num_total), fill = "white", hjust = -0.5, size = 5) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22),
+        axis.text.x = element_text(size = 12)) +
+  labs(fill = "Total journals\nin the area", title = "Full dataset")
+
+ajol <- ggplot(table_area, aes(y = freq_ajol/freq_total, x = area, fill = freq_ajol/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high= "darkblue", limits = c(0, 1.5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22),
+        axis.text.x = element_text(size = 12)) +
+  labs(fill = "Relative coverage\nof the area", title = "AJOL")
+
+ulrich <- ggplot(table_area, aes(y = freq_ulrich/freq_total, x = area, fill = freq_ulrich/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high= "darkblue", limits = c(0, 1.5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22),
+        axis.text.x = element_text(size = 14)) +
+  labs(fill = "Relative coverage\nof the area", title = "Ulrich")
+
+sjr <- ggplot(table_area, aes(y = freq_scopus/freq_total, x = area, fill = freq_scopus/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high= "darkblue", limits = c(0, 1.5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22),
+        axis.text.x = element_text(size = 12)) +
+  labs(fill = "Relative coverage\nof the area", title = "SJR")
+
+jcr <- ggplot(table_area, aes(y = freq_wos/freq_total, x = area, fill = freq_wos/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 1.5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22),
+        axis.text.x = element_text(size = 12)) +
+  labs(fill = "Relative coverage\nof the area", title = "JCR")
+
+p <- grid.arrange(total, ajol, sjr, jcr, ncol=2, nrow = 2, widths = c(0.5, 0.5))
+#ggsave("areas_plot.png", plot = p, dpi = 700)
+```
+
+

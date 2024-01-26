@@ -1,0 +1,245 @@
+---
+title: "journal_analysis_area"
+author: "Patricia Alonso-Álvarez"
+output: html_document
+date: "2022-11-07"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+rm(list = ls())
+```
+
+```{r setup, include=FALSE}
+library(data.table)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(sjmisc)
+library(ggplot2)
+library(gridExtra)
+library(extrafont)
+library(ggrepel)
+```
+
+```{r}
+#Loading JCR data
+df_jcr <- fread("jcr_africa_issn.csv")
+df_jcr_relational <- fread("jcr_africa.csv")
+df_jcr_relational <- df_jcr_relational[,c(2:4, 9)]
+df_jcr_lan <- fread("jcr_language.csv")
+df_jcr <- left_join(df_jcr, df_jcr_relational, by = "issn", na_matches = "never")
+df_jcr <- unique(df_jcr)
+df_jcr <- left_join(df_jcr, df_jcr_relational, by = c("eissn.x" = "eissn"), na_matches = "never")
+df_jcr <- unique(df_jcr)
+df_jcr$idioma_id.x <- ifelse(is.na(df_jcr$idioma_id.x) == TRUE, df_jcr$idioma_id.y, df_jcr$idioma_id.x)
+df_jcr <- df_jcr[,c(1:3, 6)]
+df_jcr <- left_join(df_jcr, df_jcr_lan, by = c("idioma_id.x" = "id"))
+df_jcr <- df_jcr[,c(1:3, 5)]
+df_jcr <- unique(df_jcr)
+colnames(df_jcr) <- c("title", "issn", "eissn", "language")
+rm(df_jcr_lan, df_jcr_relational)
+
+#Loading SJR and AJOL data
+df_ajol_sjr_lan <- fread("lan_sjr_ajol.csv") #Languages scrapped from ISSN Portal and empty ones manually filled when manuscript language was explicit in their website
+
+#Loading Ulrich data
+df_ulrich <- fread("ulrich_africa_reduced.csv")
+df_ulrich <- df_ulrich[,c(1, 3, 4, 2)]
+
+#Loading masterlist
+df_databases <- fread("journal_masterlist_jun2023.csv")
+```
+
+Ulrich language is in a different format: separating languages in different columns, cleaning the text and creating long dataframe 
+```{r}
+df_ulrich_lan <- df_ulrich$language
+df_ulrich_lan <- str_remove_all(df_ulrich_lan, " and summaries")
+df_ulrich_lan <- as.data.frame(df_ulrich_lan)
+colnames(df_ulrich_lan) <- "lan"
+vec <- str_count(df_ulrich_lan$lan, fixed("|"))
+max(vec, na.rm = TRUE)
+df_ulrich_lan$lan <- str_replace_all(df_ulrich_lan$lan, fixed("|"), ",")
+df_ulrich_lan <- separate(df_ulrich_lan, lan, into = c("lan1", "lan2", "lan3", "lan4", "lan5", "lan6", "lan7"), sep = ",")
+
+mat <- sapply(df_ulrich_lan, FUN = str_detect, "Summaries|Abstracts") 
+mat_lan <- c()
+for (i in 1:nrow(mat)) {
+  vec <- unlist(ifelse(mat[i,] == TRUE, NA, df_ulrich_lan[i,]))
+  vec <- str_trim(str_squish(str_remove_all(vec, "Text in")))
+  vec <- str_trim(str_squish(str_remove_all(vec, "Text occasionally in")))
+  mat_lan <- rbind(mat_lan, vec)
+}
+df_ulrich_lan <- as.data.frame(mat_lan)
+df_ulrich_lan <- unite(df_ulrich_lan, "langs", sep = ",", na.rm = TRUE)
+
+df_ulrich$language <- df_ulrich_lan
+vec <- str_count(df_ulrich$language, ",")
+max(vec)
+df_ulrich <- separate(df_ulrich, language, c("lan1", "lan2", "lan3", "lan4", "lan5"), sep = ",")
+df_ulrich <- pivot_longer(df_ulrich, cols = lan1:lan5, names_to = "vec", values_to = "language")
+df_ulrich <- df_ulrich[which(is.na(df_ulrich$language) == FALSE), c(1:3, 5)]
+df_ulrich$language <- ifelse(df_ulrich$language == "", NA, df_ulrich$language)
+df_ulrich <- df_ulrich[-which(df_ulrich$language == "ORM"),]
+```
+
+Adjusting JCR language format
+```{r}
+df_jcr$language <- str_to_title(df_jcr$language)
+```
+
+Cleaning AJOL and SJR language data
+```{r}
+df_ajol_sjr_lan <- pivot_longer(df_ajol_sjr_lan, cols = lan_text:lan_text11, values_to = "lan", names_to = "x")
+df_ajol_sjr_lan <- df_ajol_sjr_lan[which(df_ajol_sjr_lan$lan != ""), c(1:3, 5)]
+colnames(df_ajol_sjr_lan)[4] <- "language"
+```
+
+Database joint. Saving data for manual checks.
+```{r eval = FALSE}
+df_databases_language <- left_join(df_databases, df_ulrich, by = "issn", na_matches = "never")
+df_databases_language <- left_join(df_databases_language, df_ulrich, by = c("title.x" = "title"), na_matches = "never")
+df_databases_language$language1 <- NA
+df_databases_language$language1 <- ifelse(df_databases_language$language.x == df_databases_language$language.y,  df_databases_language$language.x, df_databases_language$language1)
+df_databases_language$language1 <- ifelse(is.na(df_databases_language$language.x) == TRUE, df_databases_language$language.y, df_databases_language$language1)
+df_databases_language$language1 <- ifelse(is.na(df_databases_language$language.y) == TRUE, df_databases_language$language.x, df_databases_language$language1)
+df_databases_language <- df_databases_language[,c(1:7, 14)]
+df_databases_language <- unique(df_databases_language)
+
+df_databases_language <- left_join(df_databases_language, df_jcr, by = c("issn.x" = "issn"), na_matches = "never")
+df_databases_language <- left_join(df_databases_language, df_jcr, by = c("title.x" = "title"), na_matches = "never")
+df_databases_language$language2 <- NA
+df_databases_language$language2 <- ifelse(df_databases_language$language.x == df_databases_language$language.y,  df_databases_language$language.x, df_databases_language$language2)
+df_databases_language$language2 <- ifelse(is.na(df_databases_language$language.x) == TRUE, df_databases_language$language.y, df_databases_language$language2)
+df_databases_language$language2 <- ifelse(is.na(df_databases_language$language.y) == TRUE, df_databases_language$language.x, df_databases_language$language2)
+df_databases_language <- df_databases_language[,c(1:8, 15)]
+df_databases_language <- unique(df_databases_language)
+
+df_databases_language <- left_join(df_databases_language, df_ajol_sjr_lan, by = c("issn.x" = "issn"), na_matches = "never")
+df_databases_language <- left_join(df_databases_language, df_ajol_sjr_lan, by = c("title.x" = "title"), na_matches = "never")
+df_databases_language$language3 <- NA
+df_databases_language$language3 <- ifelse(df_databases_language$language.x == df_databases_language$language.y,  df_databases_language$language.x, df_databases_language$language3)
+df_databases_language$language3 <- ifelse(is.na(df_databases_language$language.x) == TRUE, df_databases_language$language.y, df_databases_language$language3)
+df_databases_language$language3 <- ifelse(is.na(df_databases_language$language.y) == TRUE, df_databases_language$language.x, df_databases_language$language3)
+df_databases_language <- df_databases_language[,c(1:9, 16)]
+df_databases_language <- unique(df_databases_language)
+
+
+df_databases_language$language <- NA
+df_databases_language$language <- ifelse(is.na(df_databases_language$language2) == TRUE 
+                                         & is.na(df_databases_language$language3) == TRUE,  
+                                         df_databases_language$language1, df_databases_language$language)
+df_databases_language$language <- ifelse(is.na(df_databases_language$language1) == TRUE 
+                                         & is.na(df_databases_language$language3) == TRUE,  
+                                         df_databases_language$language2, df_databases_language$language)
+df_databases_language$language <- ifelse(is.na(df_databases_language$language1) == TRUE 
+                                         & is.na(df_databases_language$language2) == TRUE,  
+                                         df_databases_language$language3, df_databases_language$language)
+
+#write.csv(df_databases_language, "journal_language.csv", row.names = FALSE)
+```
+
+Cleaning language database
+```{r}
+df_databases_language <- fread("journal_language_revised.csv") #After manual checks
+colnames(df_databases_language)[1:3] <- c("title", "issn", "issn2")
+
+df_databases_language <- unique(df_databases_language)
+
+vec <- which(is.na(df_databases_language$language) == TRUE)
+df_databases_language <- df_databases_language[-vec,]
+
+vec <- which(duplicated(df_databases_language$title) == TRUE)
+
+vec_title <- df_databases_language$title[vec]
+vec_multi <- which(df_databases_language$title %in% vec_title)
+df_databases_language$language[vec_multi] <- "Multi-Language"
+
+df_databases_language <- df_databases_language[-vec,]
+```
+
+Calculating frequencies
+```{r}
+df_databases_language <- group_by(df_databases_language, language)
+df_databases_language$total <- 1
+
+total_ajol <- length(unique(df_databases_language$title[which(df_databases_language$is_ajol == 1)]))
+total_scopus <- length(unique(df_databases_language$title[which(df_databases_language$is_scopus == 1)]))
+total_wos <- length(unique(df_databases_language$title[which(df_databases_language$is_wos == 1)]))
+total_ulrich <- length(unique(df_databases_language$title[which(df_databases_language$is_ulrich == 1)]))
+total_length <- length(unique(df_databases_language$title))
+
+table_language <- summarise(df_databases_language, freq_ulrich = sum(is_ulrich)/total_ulrich, freq_ajol = sum(is_ajol)/total_ajol, freq_scopus = sum(is_scopus)/total_scopus, freq_wos = sum(is_wos)/total_wos, freq_total = sum(total)/total_length, num_total = sum(total))
+```
+
+```{r}
+total <- ggplot(table_language, aes(y = num_total, x = language, fill = num_total)) +
+  geom_col(width = 1, colour = "black") +
+  coord_polar(clip = "off") +
+  geom_label_repel(data = table_language, aes(label = num_total), fill = "white", size = 4) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  geom_hline(yintercept = 1) + 
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22)) +
+  labs(fill = "Total journals publishing\nin each language", title = "Full dataset")
+
+ajol <- ggplot(table_language, aes(y = freq_ajol/freq_total, x = language, fill = freq_ajol/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high= "darkblue", limits = c(0, 5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22)) +
+  labs(fill = "Relative coverage\nof the language", title = "AJOL")
+
+ulrich <- ggplot(table_language, aes(y = freq_ulrich/freq_total, x = language, fill = freq_ulrich/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high= "darkblue", limits = c(0, 5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22)) +
+  labs(fill = "Relative coverage\nof the language", title = "Ulrich")
+
+sjr <- ggplot(table_language, aes(y = freq_scopus/freq_total, x = language, fill = freq_scopus/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high= "darkblue", limits = c(0, 5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22)) +
+  labs(fill = "Relative coverage\nof the language", title = "SJR")
+
+jcr <- ggplot(table_language, aes(y = freq_wos/freq_total, x = language, fill = freq_wos/freq_total)) +
+  geom_col(width = 1, colour = "black", size = .25) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", limits = c(0, 5), oob = scales::squish) +
+  geom_hline(yintercept = 1) + 
+  coord_polar(clip = "off") +
+  theme(axis.ticks = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        text = element_text(size = 12),
+        legend.box.spacing = margin(22)) +
+  labs(fill = "Relative coverage\nof the language", title = "JCR")
+
+p <- grid.arrange(total, ajol, sjr, jcr, ncol=2, nrow = 2, widths = c(0.5, 0.5))
+#ggsave("languages_plot.png", plot = p, dpi = 700)
+```
