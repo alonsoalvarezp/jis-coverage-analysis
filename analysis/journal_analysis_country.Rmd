@@ -26,6 +26,11 @@ library(ggrepel)
 ```
 
 ```{r}
+directory_path <- ".../data"
+setwd(directory_path)
+```
+
+```{r}
 setwd("~/Dropbox/Academic/PhD/Papers")
 #Loading JCR data
 df_jcr<- fread("jcr_africa_issn.csv")

@@ -11,6 +11,11 @@ editor_options:
 rm(list = ls())
 ```
 
+```{r}
+directory_path <- ".../data"
+setwd(directory_path)
+```
+
 ```{r setup, include=FALSE}
 library(data.table)
 library(stringr)

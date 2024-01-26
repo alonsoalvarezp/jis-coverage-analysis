@@ -25,6 +25,11 @@ library(extrafont)
 
 Data loading
 ```{r}
+directory_path <- ".../data"
+setwd(directory_path)
+```
+
+```{r}
 #Loading JCR data
 df_jcr <- fread("jcr_africa_area.csv")
 df_jcr_area <- fread("jcr_areas.csv")
